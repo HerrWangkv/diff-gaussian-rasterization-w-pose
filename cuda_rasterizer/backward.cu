@@ -571,10 +571,11 @@ renderCUDA(
 	const float4* __restrict__ conic_opacity,
 	const float* __restrict__ colors,
 	const float* __restrict__ depths,
-	const float* __restrict__ final_Ts,
+	const float* __restrict__ accum_alphas,
 	const uint32_t* __restrict__ n_contrib,
 	const float* __restrict__ dL_dpixels,
 	const float* __restrict__ dL_dpixels_depth,
+	const float* __restrict__ dL_dpixels_alphas,
 	float3* __restrict__ dL_dmean2D,
 	float4* __restrict__ dL_dconic2D,
 	float* __restrict__ dL_dopacity,
@@ -614,7 +615,7 @@ renderCUDA(
 
 	// In the forward, we stored the final value for T, the
 	// product of all (1 - alpha) factors. 
-	const float T_final = inside ? final_Ts[pix_id] : 0;
+	const float T_final = inside ? (1 - accum_alphas[pix_id]) : 0;
 	float T = T_final;
 
 	// We start from the back. The ID of the last contributing
@@ -625,13 +626,17 @@ renderCUDA(
 	float accum_rec[C] = { 0 };
 	float dL_dpixel[C] = { 0 };
 	float accum_rec_depth = 0;
+	float accum_rec_alpha = 0;
 	float dL_dpixel_depth = 0;
+	float dL_dpixel_alpha = 0;
+
 	if (inside) {
 		#pragma unroll
 		for (int i = 0; i < C; i++) {
 			dL_dpixel[i] = dL_dpixels[i * H * W + pix_id];
 		}
 		dL_dpixel_depth = dL_dpixels_depth[pix_id];
+		dL_dpixel_alpha = dL_dpixels_alphas[pix_id];
 	}
 
 	float last_alpha = 0.f;
@@ -727,7 +732,8 @@ renderCUDA(
 			last_depth = skip ? last_depth : depth;
 			dL_dalpha += (depth - accum_rec_depth) * dL_dpixel_depth;
 			dL_ddepths_shared[tid] = skip ? 0.f : dchannel_dcolor * dL_dpixel_depth;
-
+			accum_rec_alpha = last_alpha + (1.f - last_alpha) * accum_rec_alpha;
+			dL_dalpha += (1.f - accum_rec_alpha) * dL_dpixel_alpha;
 
 			dL_dalpha *= T;
 			// Update last alpha (to be used in the next iteration)
@@ -869,10 +875,11 @@ void BACKWARD::render(
 	const float4* conic_opacity,
 	const float* colors,
 	const float* depths,
-	const float* final_Ts,
+	const float* accum_alphas,
 	const uint32_t* n_contrib,
 	const float* dL_dpixels,
 	const float* dL_dpixels_depth,
+	const float* dL_dpixels_alphas,
 	float3* dL_dmean2D,
 	float4* dL_dconic2D,
 	float* dL_dopacity,
@@ -888,10 +895,11 @@ void BACKWARD::render(
 		conic_opacity,
 		colors,
 		depths,
-		final_Ts,
+		accum_alphas,
 		n_contrib,
 		dL_dpixels,
 		dL_dpixels_depth,
+		dL_dpixels_alphas,
 		dL_dmean2D,
 		dL_dconic2D,
 		dL_dopacity,
